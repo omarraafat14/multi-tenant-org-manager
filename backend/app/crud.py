@@ -191,7 +191,7 @@ async def create_item(
         org_id=org_id,
         user_id=owner_id,
         action="item_created",
-        details={"item_id": str(item.id), "title": item.title},
+        details={"item_id": str(item.id)},
     )
     session.add(audit)
 

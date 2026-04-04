@@ -162,24 +162,18 @@ class MemberSearchResult(SQLModel):
 
 ###########################################
 # Item
-class ItemBase(SQLModel):
-    title: str = Field(min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=255)
+
+class ItemCreate(SQLModel):
+    item_details: dict[str, Any]
 
 
-# Properties to receive on item creation
-class ItemCreate(ItemBase):
-    pass
+class ItemUpdate(SQLModel):
+    item_details: dict[str, Any] | None = None
 
 
-# Properties to receive on item update
-class ItemUpdate(ItemBase):
-    title: str | None = Field(default=None, min_length=1, max_length=255)  # type: ignore[assignment]
-
-
-# Database model, database table inferred from class name
-class Item(ItemBase, table=True):
+class Item(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    item_details: dict[str, Any] = Field(sa_type=JSON)  # type: ignore
     created_at: datetime | None = Field(
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
@@ -194,9 +188,9 @@ class Item(ItemBase, table=True):
     organization: Organization | None = Relationship(back_populates="items")
 
 
-# Properties to return via API, id is always required
-class ItemPublic(ItemBase):
+class ItemPublic(SQLModel):
     id: uuid.UUID
+    item_details: dict[str, Any]
     owner_id: uuid.UUID | None
     org_id: uuid.UUID
     created_at: datetime | None = None
