@@ -1,5 +1,6 @@
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.models import User, UserCreate
@@ -11,7 +12,7 @@ async_engine = create_async_engine(
     echo=False,
 )
 
-AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
+AsyncSessionLocal = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # make sure all SQLModel models are imported (app.models) before initializing DB
