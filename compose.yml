@@ -92,6 +92,9 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./backend/app:/app/backend/app
+      - ./backend/tests:/app/backend/tests
+      - ./backend/pyproject.toml:/app/backend/pyproject.toml   # live pytest config (asyncio_mode)
+      - /var/run/docker.sock:/var/run/docker.sock   # testcontainers needs Docker access
     command: fastapi run --reload app/main.py
     env_file:
       - .env

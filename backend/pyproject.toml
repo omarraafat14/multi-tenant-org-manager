@@ -85,5 +85,5 @@ show_contexts = true
 [tool.ty.terminal]
 error-on-warning = true
 
-[tool.pytest]
+[tool.pytest.ini_options]
 asyncio_mode = "auto"
