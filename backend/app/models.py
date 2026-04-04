@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from pydantic import EmailStr
-from sqlalchemy import DateTime, JSON
+from sqlalchemy import Column, DateTime, Enum as SAEnum, JSON
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -126,7 +126,13 @@ class Membership(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, ondelete="CASCADE", index=True)
     org_id: uuid.UUID = Field(foreign_key="organization.id", nullable=False, ondelete="CASCADE", index=True)
-    role: Role = Field(default=Role.MEMBER)
+    role: Role = Field(
+        default=Role.MEMBER,
+        sa_column=Column(
+            SAEnum(Role, values_callable=lambda x: [e.value for e in x], name="role"),
+            nullable=False,
+        ),
+    )
     created_at: datetime | None = Field(
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
