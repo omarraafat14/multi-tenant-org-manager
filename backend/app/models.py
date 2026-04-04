@@ -124,8 +124,8 @@ class OrganizationPublic(SQLModel):
 class Membership(SQLModel, table=True):
     """Database model for membership, database table inferred from class name"""
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, ondelete="CASCADE")
-    org_id: uuid.UUID = Field(foreign_key="organization.id", nullable=False, ondelete="CASCADE")
+    user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, ondelete="CASCADE", index=True)
+    org_id: uuid.UUID = Field(foreign_key="organization.id", nullable=False, ondelete="CASCADE", index=True)
     role: Role = Field(default=Role.MEMBER)
     created_at: datetime | None = Field(
         default_factory=get_datetime_utc,
