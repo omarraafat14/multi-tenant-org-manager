@@ -235,3 +235,8 @@ class LoginRequest(SQLModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
 
+
+class AskRequest(SQLModel):
+    question: str = Field(min_length=1, max_length=2000)
+    stream: bool = False
+

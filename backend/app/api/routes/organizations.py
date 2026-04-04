@@ -1,13 +1,18 @@
 import re
 import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select as sa_select, text
 from sqlmodel import col, func, select
 
 from app import crud
 from app.api.deps import CurrentUser, SessionDep, get_org_membership, require_admin
+from app.core.config import settings
 from app.models import (
+    AskRequest,
     AuditLog,
     AuditLogPublic,
     AuditLogsPublic,
@@ -221,3 +226,72 @@ async def list_audit_logs(
         data=[AuditLogPublic.model_validate(log) for log in logs],
         count=count,
     )
+
+
+@router.post("/{org_id}/audit-logs/ask")
+async def ask_about_audit_logs(
+    org_id: uuid.UUID,
+    body: AskRequest,
+    session: SessionDep,
+    _: Membership = Depends(require_admin),
+) -> Any:
+    """
+    Ask an AI question about today's audit logs (admin only).
+
+    Retrieves all audit log entries created since UTC midnight, builds a
+    context window, and forwards the question to the configured LLM.
+
+    - `stream: false` → returns `{"response": "..."}` JSON.
+    - `stream: true`  → streams plain-text tokens as they arrive.
+
+    Requires `LLM_API_KEY` to be set in the environment.
+    """
+    if not settings.LLM_API_KEY:
+        raise HTTPException(status_code=503, detail="LLM_API_KEY is not configured")
+
+    # Collect today's logs (UTC midnight → now)
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    logs_stmt = (
+        select(AuditLog)
+        .where(AuditLog.org_id == org_id)
+        .where(AuditLog.created_at >= today_start)
+        .order_by(col(AuditLog.created_at).asc())
+    )
+    logs = (await session.exec(logs_stmt)).all()
+
+    if not logs:
+        no_data = "No audit log entries found for today."
+        if body.stream:
+            async def _empty():
+                yield no_data
+            return StreamingResponse(_empty(), media_type="text/plain")
+        return {"response": no_data}
+
+    log_lines = "\n".join(
+        f"[{log.created_at}] action={log.action} details={log.details}"
+        for log in logs
+    )
+    prompt = (
+        "You are an assistant analyzing audit logs for an organization.\n"
+        "Answer clearly and concisely based only on the logs provided.\n\n"
+        f"Today's audit log entries:\n{log_lines}\n\n"
+        f"Question: {body.question}"
+    )
+
+    import google.generativeai as genai  # lazy import — only when endpoint is hit
+
+    genai.configure(api_key=settings.LLM_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
+    if body.stream:
+        async def token_stream():
+            async for chunk in await model.generate_content_async(prompt, stream=True):
+                if chunk.text:
+                    yield chunk.text
+
+        return StreamingResponse(token_stream(), media_type="text/plain")
+
+    response = await model.generate_content_async(prompt)
+    return {"response": response.text}
