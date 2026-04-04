@@ -21,7 +21,7 @@ A production-ready multi-tenant backend built with **FastAPI**, **async SQLAlche
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                        Clients                          │
-│              (browser / curl / tests)                   │
+│                  (curl / tests / apps)                  │
 └──────────────────────┬──────────────────────────────────┘
                        │ HTTP
 ┌──────────────────────▼──────────────────────────────────┐
@@ -182,7 +182,6 @@ This starts:
 | Service | URL | Description |
 |---------|-----|-------------|
 | **backend** | http://localhost:8000 | FastAPI app (hot-reload) |
-| **frontend** | http://localhost:5173 | React dashboard |
 | **db** | localhost:5432 | PostgreSQL 18 |
 | **adminer** | http://localhost:8080 | DB browser UI |
 | **mailcatcher** | http://localhost:1080 | Catch outgoing emails |

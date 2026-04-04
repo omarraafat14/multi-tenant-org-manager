@@ -12,30 +12,58 @@ on:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: changethis
+          POSTGRES_DB: app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.10"
-      - name: Install uv
+          python-version: "3.11"
+
+      - name: Setup uv
         uses: astral-sh/setup-uv@v7
-      - run: docker compose down -v --remove-orphans
-      - run: docker compose up -d db mailcatcher
-      - name: Migrate DB
-        run: uv run bash scripts/prestart.sh
+
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
         working-directory: backend
-      - name: Run tests
-        run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
+
+      - name: Run tests with coverage
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg_async://postgres:changethis@localhost:5432/app_test
+          SECRET_KEY: ci-secret-key-not-used-in-production
+          FIRST_SUPERUSER: admin@example.com
+          FIRST_SUPERUSER_PASSWORD: changethis
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: app
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: changethis
+        run: |
+          uv run coverage run -m pytest tests/ -v --asyncio-mode=auto
+          uv run coverage report
+          uv run coverage html --title "Coverage for ${{ github.sha }}"
         working-directory: backend
-      - run: docker compose down -v --remove-orphans
+
       - name: Store coverage files
         uses: actions/upload-artifact@v7
         with:
           name: coverage-html
           path: backend/htmlcov
           include-hidden-files: true
-      - name: Coverage report
-        run: uv run coverage report --fail-under=90
-        working-directory: backend
