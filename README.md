@@ -1,233 +1,408 @@
-# Full Stack FastAPI Template
+# Multi-Tenant Organization Manager
 
-<a href="https://github.com/fastapi/full-stack-fastapi-template/actions?query=workflow%3A%22Test+Docker+Compose%22" target="_blank"><img src="https://github.com/fastapi/full-stack-fastapi-template/workflows/Test%20Docker%20Compose/badge.svg" alt="Test Docker Compose"></a>
-<a href="https://github.com/fastapi/full-stack-fastapi-template/actions?query=workflow%3A%22Test+Backend%22" target="_blank"><img src="https://github.com/fastapi/full-stack-fastapi-template/workflows/Test%20Backend/badge.svg" alt="Test Backend"></a>
-<a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/fastapi/full-stack-fastapi-template" target="_blank"><img src="https://coverage-badge.samuelcolvin.workers.dev/fastapi/full-stack-fastapi-template.svg" alt="Coverage"></a>
+A production-ready multi-tenant backend built with **FastAPI**, **async SQLAlchemy 2.0**, and **PostgreSQL**. Organisations are fully isolated — members can only access data within their own organisation, and role-based access control (RBAC) is enforced at the API layer.
 
-## Technology Stack and Features
+---
 
-- ⚡ [**FastAPI**](https://fastapi.tiangolo.com) for the Python backend API.
-  - 🧰 [SQLModel](https://sqlmodel.tiangolo.com) for the Python SQL database interactions (ORM).
-  - 🔍 [Pydantic](https://docs.pydantic.dev), used by FastAPI, for the data validation and settings management.
-  - 💾 [PostgreSQL](https://www.postgresql.org) as the SQL database.
-- 🚀 [React](https://react.dev) for the frontend.
-  - 💃 Using TypeScript, hooks, [Vite](https://vitejs.dev), and other parts of a modern frontend stack.
-  - 🎨 [Tailwind CSS](https://tailwindcss.com) and [shadcn/ui](https://ui.shadcn.com) for the frontend components.
-  - 🤖 An automatically generated frontend client.
-  - 🧪 [Playwright](https://playwright.dev) for End-to-End testing.
-  - 🦇 Dark mode support.
-- 🐋 [Docker Compose](https://www.docker.com) for development and production.
-- 🔒 Secure password hashing by default.
-- 🔑 JWT (JSON Web Token) authentication.
-- 📫 Email based password recovery.
-- 📬 [Mailcatcher](https://mailcatcher.me) for local email testing during development.
-- ✅ Tests with [Pytest](https://pytest.org).
-- 📞 [Traefik](https://traefik.io) as a reverse proxy / load balancer.
-- 🚢 Deployment instructions using Docker Compose, including how to set up a frontend Traefik proxy to handle automatic HTTPS certificates.
-- 🏭 CI (continuous integration) and CD (continuous deployment) based on GitHub Actions.
+## Table of Contents
 
-### Dashboard Login
+- [Architecture Overview](#architecture-overview)
+- [Data Model](#data-model)
+- [API Reference](#api-reference)
+- [How to Run Locally](#how-to-run-locally)
+- [Running Tests](#running-tests)
+- [Design Decisions & Tradeoffs](#design-decisions--tradeoffs)
+- [Project Structure](#project-structure)
 
-[![API docs](img/login.png)](https://github.com/fastapi/full-stack-fastapi-template)
+---
 
-### Dashboard - Admin
+## Architecture Overview
 
-[![API docs](img/dashboard.png)](https://github.com/fastapi/full-stack-fastapi-template)
-
-### Dashboard - Items
-
-[![API docs](img/dashboard-items.png)](https://github.com/fastapi/full-stack-fastapi-template)
-
-### Dashboard - Dark Mode
-
-[![API docs](img/dashboard-dark.png)](https://github.com/fastapi/full-stack-fastapi-template)
-
-### Interactive API Documentation
-
-[![API docs](img/docs.png)](https://github.com/fastapi/full-stack-fastapi-template)
-
-## How To Use It
-
-You can **just fork or clone** this repository and use it as is.
-
-✨ It just works. ✨
-
-### How to Use a Private Repository
-
-If you want to have a private repository, GitHub won't allow you to simply fork it as it doesn't allow changing the visibility of forks.
-
-But you can do the following:
-
-- Create a new GitHub repo, for example `my-full-stack`.
-- Clone this repository manually, set the name with the name of the project you want to use, for example `my-full-stack`:
-
-```bash
-git clone git@github.com:fastapi/full-stack-fastapi-template.git my-full-stack
+```
+┌─────────────────────────────────────────────────────────┐
+│                        Clients                          │
+│              (browser / curl / tests)                   │
+└──────────────────────┬──────────────────────────────────┘
+                       │ HTTP
+┌──────────────────────▼──────────────────────────────────┐
+│                   Traefik (proxy)                       │
+│          TLS termination · routing · redirect           │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────┐
+│              FastAPI  (port 8000)                       │
+│                                                         │
+│  /api/v1/auth/*          ← JSON register / login        │
+│  /api/v1/organizations/* ← RBAC org + item endpoints    │
+│  /api/v1/users/*         ← user profile management      │
+│  /api/v1/utils/*         ← health-check                 │
+│                                                         │
+│  Async SQLAlchemy 2.0 · SQLModel · Pydantic v2          │
+│  JWT auth · bcrypt/argon2 password hashing              │
+└──────────────────────┬──────────────────────────────────┘
+                       │ psycopg (async)
+┌──────────────────────▼──────────────────────────────────┐
+│                  PostgreSQL 18                          │
+│                                                         │
+│  user · organization · membership · item · auditlog     │
+│  GIN index for full-text member search                  │
+│  Alembic migrations                                     │
+└─────────────────────────────────────────────────────────┘
 ```
 
-- Enter into the new directory:
+---
 
-```bash
-cd my-full-stack
+## Data Model
+
+```
+user
+├── id          UUID PK
+├── email       unique, FTS-indexed
+├── full_name
+├── hashed_password
+├── is_active / is_superuser
+└── created_at
+
+organization
+├── id          UUID PK
+├── org_name
+└── created_at
+
+membership  (user ↔ organisation, many-to-many with role)
+├── id
+├── user_id     FK → user   ON DELETE CASCADE
+├── org_id      FK → org    ON DELETE CASCADE
+├── role        ENUM('admin', 'member')
+└── created_at
+
+item  (org-scoped; owner nullable so items survive user deletion)
+├── id
+├── item_details  JSONB      ← flexible schema
+├── org_id        FK → org   ON DELETE CASCADE
+├── owner_id      FK → user  ON DELETE SET NULL (nullable)
+└── created_at
+
+auditlog
+├── id
+├── org_id      FK → org    ON DELETE CASCADE
+├── user_id     FK → user   ON DELETE SET NULL (nullable)
+├── action      varchar
+├── details     JSONB
+└── created_at
 ```
 
-- Set the new origin to your new repository, copy it from the GitHub interface, for example:
+### GIN index for full-text search
 
-```bash
-git remote set-url origin git@github.com:octocat/my-full-stack.git
+```sql
+CREATE INDEX ix_user_fts ON "user"
+  USING GIN (to_tsvector('english',
+    coalesce(full_name, '') || ' ' || email));
 ```
 
-- Add this repo as another "remote" to allow you to get updates later:
+Enables prefix-matching search (`john:* & sm:*`) across member names and emails with no external search service.
+
+---
+
+## API Reference
+
+All endpoints are prefixed with `/api/v1`.
+
+### Authentication
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/auth/register` | — | Create account, returns JWT |
+| `POST` | `/auth/login` | — | JSON login, returns JWT |
+| `POST` | `/login/access-token` | — | OAuth2 form login (Swagger UI) |
+| `POST` | `/password-recovery/{email}` | — | Send password reset email |
+| `POST` | `/reset-password/` | — | Set new password via reset token |
+
+### Organizations
+
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| `POST` | `/organizations/` | any user | Create org — caller becomes admin |
+| `POST` | `/{org_id}/users` | admin | Invite an existing user by email |
+| `GET` | `/{org_id}/users` | admin | List all members |
+| `GET` | `/{org_id}/users/search?q=` | admin | Full-text search members (prefix) |
+| `POST` | `/{org_id}/items` | member / admin | Create an item |
+| `GET` | `/{org_id}/items` | member / admin | List items (members see own; admins see all) |
+| `GET` | `/{org_id}/audit-logs` | admin | Paginated audit log |
+| `POST` | `/{org_id}/audit-logs/ask` | admin | AI chatbot — ask about today's audit activity |
+
+### Users
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/users/me` | self | Get own profile |
+| `PATCH` | `/users/me` | self | Update own profile |
+| `PATCH` | `/users/me/password` | self | Change password |
+| `DELETE` | `/users/me` | self | Delete own account |
+| `GET` | `/users/` | superuser | List all users |
+| `POST` | `/users/` | superuser | Create user |
+| `GET` | `/users/{user_id}` | superuser | Get user by ID |
+| `PATCH` | `/users/{user_id}` | superuser | Update user |
+| `DELETE` | `/users/{user_id}` | superuser | Delete user |
+
+---
+
+## How to Run Locally
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/)
+- (Optional) Python 3.11+ for running tests outside Docker
+
+### 1. Clone and configure
 
 ```bash
-git remote add upstream git@github.com:fastapi/full-stack-fastapi-template.git
+git clone <repo-url>
+cd multi-tenant-org-manager
+cp .env.example .env   # or edit .env directly
 ```
 
-- Push the code to your new repository:
+Key `.env` variables:
+
+```ini
+POSTGRES_PASSWORD=changethis     # change before any real deployment
+SECRET_KEY=changethis            # generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+FIRST_SUPERUSER=admin@example.com
+FIRST_SUPERUSER_PASSWORD=changethis
+LLM_API_KEY=                     # optional — Gemini key for the AI chatbot endpoint
+```
+
+### 2. Start all services
 
 ```bash
-git push -u origin master
+docker compose up --build
 ```
 
-### Update From the Original Template
+This starts:
 
-After cloning the repository, and after doing changes, you might want to get the latest changes from this original template.
+| Service | URL | Description |
+|---------|-----|-------------|
+| **backend** | http://localhost:8000 | FastAPI app (hot-reload) |
+| **frontend** | http://localhost:5173 | React dashboard |
+| **db** | localhost:5432 | PostgreSQL 18 |
+| **adminer** | http://localhost:8080 | DB browser UI |
+| **mailcatcher** | http://localhost:1080 | Catch outgoing emails |
 
-- Make sure you added the original repository as a remote, you can check it with:
+The `prestart` service runs automatically before the backend starts — it applies Alembic migrations and seeds the first superuser.
+
+### 3. Explore the API
+
+- Interactive docs (Swagger UI): http://localhost:8000/docs
+- Alternative docs (ReDoc): http://localhost:8000/redoc
+- Health check: http://localhost:8000/api/v1/utils/health-check/
+
+### 4. Quick API walkthrough
 
 ```bash
-git remote -v
+BASE=http://localhost:8000/api/v1
 
-origin    git@github.com:octocat/my-full-stack.git (fetch)
-origin    git@github.com:octocat/my-full-stack.git (push)
-upstream    git@github.com:fastapi/full-stack-fastapi-template.git (fetch)
-upstream    git@github.com:fastapi/full-stack-fastapi-template.git (push)
+# Register a user
+curl -s -X POST $BASE/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"Secret123!","full_name":"Alice"}' | jq .
+
+# Login
+TOKEN=$(curl -s -X POST $BASE/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"Secret123!"}' | jq -r .access_token)
+
+# Create an organisation
+ORG=$(curl -s -X POST $BASE/organizations/ \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"org_name":"Acme Corp"}' | jq -r .id)
+
+# Create an item
+curl -s -X POST $BASE/organizations/$ORG/items \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"item_details":{"title":"Q1 Report","status":"draft"}}' | jq .
+
+# View audit log
+curl -s $BASE/organizations/$ORG/audit-logs \
+  -H "Authorization: Bearer $TOKEN" | jq .
 ```
 
-- Pull the latest changes without merging:
+---
+
+## Running Tests
+
+Tests use **pytest-asyncio** and **testcontainers** (Postgres). Two modes are supported:
+
+### Docker mode (recommended — no local Python setup needed)
 
 ```bash
-git pull --no-commit upstream master
+# Create the test database once
+docker compose exec db psql -U postgres -c "CREATE DATABASE app_test;"
+
+# Run the full test suite
+docker compose exec \
+  -e TEST_DATABASE_URL=postgresql+psycopg_async://postgres:changethis@db:5432/app_test \
+  backend bash -c "cd /app/backend && python -m pytest tests/ -v --asyncio-mode=auto"
 ```
 
-This will download the latest changes from this template without committing them, that way you can check everything is right before committing.
+### Local mode (testcontainers auto-provisions Postgres)
 
-- If there are conflicts, solve them in your editor.
-
-- Once you are done, commit the changes:
+Requires Docker to be running (testcontainers spawns its own Postgres container):
 
 ```bash
-git merge --continue
+cd backend
+pip install -e ".[dev]"          # or: uv sync --group dev
+pytest tests/ -v
 ```
 
-### Configure
+### Test coverage
 
-You can then update configs in the `.env` files to customize your configurations.
+```
+tests/test_auth.py           10 tests
+  ├── register: success, duplicate email, short password, invalid email
+  └── login: success, wrong password, unknown email, missing/malformed/valid JWT
 
-Before deploying it, make sure you change at least the values for:
-
-- `SECRET_KEY`
-- `FIRST_SUPERUSER_PASSWORD`
-- `POSTGRES_PASSWORD`
-
-You can (and should) pass these as environment variables from secrets.
-
-Read the [deployment.md](./deployment.md) docs for more details.
-
-### Generate Secret Keys
-
-Some environment variables in the `.env` file have a default value of `changethis`.
-
-You have to change them with a secret key, to generate secret keys you can run the following command:
-
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
+tests/test_organizations.py  15 tests
+  ├── org creation: creator becomes admin, audit log emitted
+  ├── RBAC — member restrictions: cannot invite, list members, view audit logs
+  ├── RBAC — admin capabilities: invite user, see all items, view audit logs
+  ├── edge cases: invite unknown email → 400, invite duplicate → 400
+  └── org isolation: non-member blocked, cross-org access blocked, items isolated
 ```
 
-Copy the content and use that as password / secret key. And run that again to generate another secure key.
+---
 
-## How To Use It - Alternative With Copier
+## Design Decisions & Tradeoffs
 
-This repository also supports generating a new project using [Copier](https://copier.readthedocs.io).
+### Async SQLAlchemy 2.0 over sync ORM
 
-It will copy all the files, ask you configuration questions, and update the `.env` files with your answers.
+**Decision:** All database access uses `async_sessionmaker` + `AsyncSession` with `psycopg` (v3) async driver.
 
-### Install Copier
+**Why:** FastAPI is built on Starlette's async event loop. Sync ORM calls block the loop, meaning one slow query prevents all other requests from being served. Async I/O allows thousands of concurrent requests with a small thread pool.
 
-You can install Copier with:
+**Tradeoff:** Async SQLAlchemy has sharper edges — lazy-loaded relationships silently fail, and `session.exec()` (SQLModel) vs `session.execute()` (SQLAlchemy) behave differently for joins. Multi-column joins that return non-model rows require `session.execute()` with `.mappings()`. This added some complexity to the FTS search endpoint.
 
-```bash
-pip install copier
+---
+
+### NullPool for test sessions
+
+**Decision:** The test engine is created with `poolclass=NullPool`.
+
+**Why:** pytest-asyncio creates a new event loop per test function. A connection pool binds connections to the event loop that created them — reusing a pooled connection on a different loop raises `RuntimeError`. `NullPool` opens and closes a fresh connection per request, which is slower but loop-safe.
+
+**Tradeoff:** Slightly slower tests (no connection reuse), but correct behaviour across all test isolation levels.
+
+---
+
+### Shared schema, scoped queries (vs separate schemas per tenant)
+
+**Decision:** All organisations share the same PostgreSQL tables. Every query filters by `org_id`.
+
+**Why:** A separate-schema or separate-database approach (full tenant isolation at the DB level) requires dynamic connection routing, per-tenant migration runs, and complicates connection pooling. For most multi-tenant SaaS applications the operational overhead outweighs the benefits until scale demands it.
+
+**Tradeoff:** A bug that omits a `.where(org_id == ...)` filter could leak data across tenants. This is mitigated by centralising all data access through CRUD functions and RBAC FastAPI dependencies, so raw queries never appear in route handlers.
+
+---
+
+### RBAC via FastAPI dependency injection
+
+**Decision:** RBAC is enforced through two reusable dependencies — `get_org_membership` (any member) and `require_admin` (admin only) — injected directly into route signatures.
+
+```python
+@router.post("/{org_id}/users")
+async def invite_user(
+    ...,
+    _: Membership = Depends(require_admin),   # ← enforced here
+):
 ```
 
-Or better, if you have [`pipx`](https://pipx.pypa.io/), you can run it with:
+**Why:** Dependencies run before the handler body. There is no way to accidentally skip the check — if `require_admin` raises, FastAPI short-circuits with 403 before the handler runs. Tests confirmed all 403/404 paths without any mocking.
 
-```bash
-pipx install copier
+**Tradeoff:** Fine-grained permissions (e.g., role hierarchy, per-resource ACLs) would require a more expressive permission model. For this two-role system (admin / member) the dependency approach is simple and self-documenting.
+
+---
+
+### Flexible `item_details: JSONB` instead of fixed columns
+
+**Decision:** `Item` stores a single `item_details JSONB` column instead of predefined `title` / `description` columns.
+
+**Why:** Different organisations may attach entirely different metadata to items. A fixed schema would require a migration for every new field requirement. JSONB preserves the flexibility of a document store while staying inside PostgreSQL (no extra service, full ACID guarantees, indexable with GIN if needed later).
+
+**Tradeoff:** No column-level constraints or indexing on the contents by default. Application code must validate the shape of `item_details` at the API boundary (done via `dict[str, Any]` in Pydantic — any JSON object is accepted).
+
+---
+
+### PostgreSQL full-text search with GIN index
+
+**Decision:** Member search uses `to_tsvector` / `to_tsquery` with a GIN index rather than `ILIKE` or an external search engine.
+
+**Why:** `ILIKE '%term%'` requires a full table scan. A GIN index on the tsvector of `full_name || ' ' || email` makes prefix-match searches (`john:*`) fast at any table size, with zero infrastructure beyond what's already running.
+
+**Tradeoff:** FTS is English-stemmed, so language-specific edge cases (e.g. searching for "running" matching "run") may behave unexpectedly. `ILIKE` is simpler to reason about for exact substring matches. For an international user base, a `pg_trgm` trigram index might be more appropriate.
+
+---
+
+### Audit log in the same transaction as the triggering action
+
+**Decision:** `log_action()` is called inside the same database transaction as the operation it records (using `session.flush()` to get IDs, then a single `session.commit()`).
+
+**Why:** An audit log that can succeed while the action fails (or vice versa) is unreliable. Keeping them in one transaction means either both land or neither does.
+
+**Tradeoff:** Slightly larger transactions. For high-throughput writes, decoupling the audit log to an async queue (e.g. Kafka, Redis Streams) would improve write latency at the cost of eventual-consistency guarantees on the audit trail.
+
+---
+
+### Dual-mode test database (testcontainers + external URL)
+
+**Decision:** `conftest.py` checks `TEST_DATABASE_URL`. If set, it uses that URL directly; otherwise it spins up a fresh Postgres container via testcontainers.
+
+**Why:** Running testcontainers inside Docker Compose (container-in-container) is unreliable — the spawned Postgres container maps a port on the Docker host, but the backend container is on a bridge network and cannot reach `172.17.0.x`. The dual-mode approach gives clean local/CI execution (testcontainers) and reliable Docker Compose execution (existing `db` service + `app_test` database).
+
+**Tradeoff:** Tests do not truncate between runs in Docker mode (the `app_test` DB accumulates data). Because every test creates users and organisations with randomised emails and IDs, cross-contamination is avoided in practice — but a long-running `app_test` DB may grow large over many test runs.
+
+---
+
+## Project Structure
+
 ```
-
-**Note**: If you have `pipx`, installing copier is optional, you could run it directly.
-
-### Generate a Project With Copier
-
-Decide a name for your new project's directory, you will use it below. For example, `my-awesome-project`.
-
-Go to the directory that will be the parent of your project, and run the command with your project's name:
-
-```bash
-copier copy https://github.com/fastapi/full-stack-fastapi-template my-awesome-project --trust
+.
+├── compose.yml                  # Docker Compose (all services)
+├── .env                         # Environment config (copy from .env.example)
+│
+└── backend/
+    ├── Dockerfile
+    ├── pyproject.toml           # Dependencies + pytest config
+    ├── alembic.ini
+    │
+    ├── app/
+    │   ├── main.py              # FastAPI app entrypoint
+    │   ├── models.py            # All SQLModel table + Pydantic schema definitions
+    │   ├── crud.py              # Async DB operations (no raw SQL in routes)
+    │   │
+    │   ├── api/
+    │   │   ├── deps.py          # get_db, get_current_user, require_admin, get_org_membership
+    │   │   ├── main.py          # Router registration
+    │   │   └── routes/
+    │   │       ├── auth.py      # /auth/register, /auth/login, OAuth2 form login
+    │   │       ├── organizations.py  # All org / member / item / audit endpoints
+    │   │       ├── users.py     # User self-management + superuser CRUD
+    │   │       └── utils.py     # Health check
+    │   │
+    │   ├── core/
+    │   │   ├── config.py        # Pydantic Settings (reads .env)
+    │   │   ├── db.py            # Async engine + AsyncSessionLocal + init_db
+    │   │   └── security.py      # JWT creation, password hashing
+    │   │
+    │   └── alembic/
+    │       └── versions/
+    │           ├── 578553d2161a_initial.py              # Base schema
+    │           ├── c1d2e3f4a5b6_add_user_fts_gin_index.py
+    │           └── d2e3f4a5b6c7_replace_item_..._json.py
+    │
+    └── tests/
+        ├── conftest.py          # Dual-mode DB setup, async session + client fixtures
+        ├── test_auth.py         # 10 authentication tests
+        ├── test_organizations.py # 15 RBAC + isolation tests
+        └── utils/
+            └── utils.py         # random_email, api_register, new_user, new_org helpers
 ```
-
-If you have `pipx` and you didn't install `copier`, you can run it directly:
-
-```bash
-pipx run copier copy https://github.com/fastapi/full-stack-fastapi-template my-awesome-project --trust
-```
-
-**Note** the `--trust` option is necessary to be able to execute a [post-creation script](https://github.com/fastapi/full-stack-fastapi-template/blob/master/.copier/update_dotenv.py) that updates your `.env` files.
-
-### Input Variables
-
-Copier will ask you for some data, you might want to have at hand before generating the project.
-
-But don't worry, you can just update any of that in the `.env` files afterwards.
-
-The input variables, with their default values (some auto generated) are:
-
-- `project_name`: (default: `"FastAPI Project"`) The name of the project, shown to API users (in .env).
-- `stack_name`: (default: `"fastapi-project"`) The name of the stack used for Docker Compose labels and project name (no spaces, no periods) (in .env).
-- `secret_key`: (default: `"changethis"`) The secret key for the project, used for security, stored in .env, you can generate one with the method above.
-- `first_superuser`: (default: `"admin@example.com"`) The email of the first superuser (in .env).
-- `first_superuser_password`: (default: `"changethis"`) The password of the first superuser (in .env).
-- `smtp_host`: (default: "") The SMTP server host to send emails, you can set it later in .env.
-- `smtp_user`: (default: "") The SMTP server user to send emails, you can set it later in .env.
-- `smtp_password`: (default: "") The SMTP server password to send emails, you can set it later in .env.
-- `emails_from_email`: (default: `"info@example.com"`) The email account to send emails from, you can set it later in .env.
-- `postgres_password`: (default: `"changethis"`) The password for the PostgreSQL database, stored in .env, you can generate one with the method above.
-- `sentry_dsn`: (default: "") The DSN for Sentry, if you are using it, you can set it later in .env.
-
-## Backend Development
-
-Backend docs: [backend/README.md](./backend/README.md).
-
-## Frontend Development
-
-Frontend docs: [frontend/README.md](./frontend/README.md).
-
-## Deployment
-
-Deployment docs: [deployment.md](./deployment.md).
-
-## Development
-
-General development docs: [development.md](./development.md).
-
-This includes using Docker Compose, custom local domains, `.env` configurations, etc.
-
-## Release Notes
-
-Check the file [release-notes.md](./release-notes.md).
-
-## License
-
-The Full Stack FastAPI Template is licensed under the terms of the MIT license.
