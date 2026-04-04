@@ -149,6 +149,10 @@ class MembershipPublic(SQLModel):
     role: Role
     created_at: datetime | None = None
 
+class InviteUser(SQLModel):
+    email: EmailStr
+    role: Role = Role.MEMBER
+
 ###########################################
 # Item
 class ItemBase(SQLModel):
@@ -186,7 +190,7 @@ class Item(ItemBase, table=True):
 # Properties to return via API, id is always required
 class ItemPublic(ItemBase):
     id: uuid.UUID
-    owner_id: uuid.UUID
+    owner_id: uuid.UUID | None
     org_id: uuid.UUID
     created_at: datetime | None = None
 
@@ -229,3 +233,4 @@ class AuditLogsPublic(SQLModel):
 class LoginRequest(SQLModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+

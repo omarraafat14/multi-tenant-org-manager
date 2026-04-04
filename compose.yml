@@ -54,6 +54,8 @@ services:
       db:
         condition: service_healthy
         restart: true
+    volumes:
+      - ./backend/app:/app/backend/app
     command: bash scripts/prestart.sh
     env_file:
       - .env
@@ -88,6 +90,9 @@ services:
         restart: true
       prestart:
         condition: service_completed_successfully
+    volumes:
+      - ./backend/app:/app/backend/app
+    command: fastapi run --reload app/main.py
     env_file:
       - .env
     environment:
