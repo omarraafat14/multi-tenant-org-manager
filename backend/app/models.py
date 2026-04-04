@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime, timezone
-
+from enum import Enum
+from typing import Any
 from pydantic import EmailStr
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, JSON
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -54,6 +55,7 @@ class User(UserBase, table=True):
         sa_type=DateTime(timezone=True),  # type: ignore
     )
     items: list["Item"] = Relationship(back_populates="owner", cascade_delete=True)
+    memberships: list["Membership"] = Relationship(back_populates="user", cascade_delete=True)
 
 
 # Properties to return via API, id is always required
@@ -64,47 +66,6 @@ class UserPublic(UserBase):
 
 class UsersPublic(SQLModel):
     data: list[UserPublic]
-    count: int
-
-
-# Shared properties
-class ItemBase(SQLModel):
-    title: str = Field(min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=255)
-
-
-# Properties to receive on item creation
-class ItemCreate(ItemBase):
-    pass
-
-
-# Properties to receive on item update
-class ItemUpdate(ItemBase):
-    title: str | None = Field(default=None, min_length=1, max_length=255)  # type: ignore[assignment]
-
-
-# Database model, database table inferred from class name
-class Item(ItemBase, table=True):
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    created_at: datetime | None = Field(
-        default_factory=get_datetime_utc,
-        sa_type=DateTime(timezone=True),  # type: ignore
-    )
-    owner_id: uuid.UUID = Field(
-        foreign_key="user.id", nullable=False, ondelete="CASCADE"
-    )
-    owner: User | None = Relationship(back_populates="items")
-
-
-# Properties to return via API, id is always required
-class ItemPublic(ItemBase):
-    id: uuid.UUID
-    owner_id: uuid.UUID
-    created_at: datetime | None = None
-
-
-class ItemsPublic(SQLModel):
-    data: list[ItemPublic]
     count: int
 
 
@@ -127,3 +88,132 @@ class TokenPayload(SQLModel):
 class NewPassword(SQLModel):
     token: str
     new_password: str = Field(min_length=8, max_length=128)
+
+
+###########################################
+class Role(str, Enum):
+    ADMIN = "admin"
+    MEMBER = "member"
+
+#  Organization 
+class Organization(SQLModel, table=True):
+    """Database model for organization, database table inferred from class name"""
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    org_name: str = Field(max_length=255)
+    created_at : datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    # Relationships
+    memberships: list["Membership"] = Relationship(back_populates="organization", cascade_delete=True)
+    items: list["Item"] = Relationship(back_populates="organization", cascade_delete=True)
+    audit_logs: list["AuditLog"] = Relationship(back_populates="organization", cascade_delete=True)
+
+class OrganizationCreate(SQLModel):
+    """Used when creating an organization (API input)"""
+    org_name: str = Field(min_length=1, max_length=255)
+
+class OrganizationPublic(SQLModel):
+    """Used when returning organization data via API (API output)"""
+    id: uuid.UUID
+    org_name: str
+    created_at: datetime | None = None
+
+###########################################
+# Membership 
+class Membership(SQLModel, table=True):
+    """Database model for membership, database table inferred from class name"""
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, ondelete="CASCADE")
+    org_id: uuid.UUID = Field(foreign_key="organization.id", nullable=False, ondelete="CASCADE")
+    role: Role = Field(default=Role.MEMBER)
+    created_at: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    # Relationships
+    user: User | None = Relationship(back_populates="memberships")
+    organization: Organization | None = Relationship(back_populates="memberships")
+
+class MembershipPublic(SQLModel):
+    """Used when returning membership data via API (API output)"""
+    id: uuid.UUID
+    user_id: uuid.UUID
+    org_id: uuid.UUID
+    role: Role
+    created_at: datetime | None = None
+
+###########################################
+# Item
+class ItemBase(SQLModel):
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=255)
+
+
+# Properties to receive on item creation
+class ItemCreate(ItemBase):
+    pass
+
+
+# Properties to receive on item update
+class ItemUpdate(ItemBase):
+    title: str | None = Field(default=None, min_length=1, max_length=255)  # type: ignore[assignment]
+
+
+# Database model, database table inferred from class name
+class Item(ItemBase, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    created_at: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    owner_id: uuid.UUID | None = Field(
+        default=None, foreign_key="user.id", nullable=True, ondelete="SET NULL"
+    )
+    org_id: uuid.UUID = Field(
+        foreign_key="organization.id", nullable=False, ondelete="CASCADE"
+    )
+    owner: User | None = Relationship(back_populates="items")
+    organization: Organization | None = Relationship(back_populates="items")
+
+
+# Properties to return via API, id is always required
+class ItemPublic(ItemBase):
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    org_id: uuid.UUID
+    created_at: datetime | None = None
+
+
+class ItemsPublic(SQLModel):
+    data: list[ItemPublic]
+    count: int
+
+###########################################
+# AuditLog 
+class AuditLog(SQLModel, table=True):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    org_id: uuid.UUID = Field(foreign_key="organization.id", ondelete="CASCADE", index=True)
+    user_id: uuid.UUID | None = Field(
+        default=None, foreign_key="user.id", ondelete="SET NULL", nullable=True
+    )
+    action: str = Field(max_length=500)
+    details: dict[str, Any] | None = Field(default=None, sa_type=JSON)  # type: ignore
+    created_at: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    organization: Organization | None = Relationship(back_populates="audit_logs")
+
+
+class AuditLogPublic(SQLModel):
+    id: uuid.UUID
+    org_id: uuid.UUID
+    user_id: uuid.UUID | None
+    action: str
+    details: dict[str, Any] | None
+    created_at: datetime | None
+
+class AuditLogsPublic(SQLModel):
+    data: list[AuditLogPublic]
+    count: int
