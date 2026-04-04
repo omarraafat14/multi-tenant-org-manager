@@ -223,3 +223,9 @@ class AuditLogPublic(SQLModel):
 class AuditLogsPublic(SQLModel):
     data: list[AuditLogPublic]
     count: int
+
+
+# Auth request schemas
+class LoginRequest(SQLModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
