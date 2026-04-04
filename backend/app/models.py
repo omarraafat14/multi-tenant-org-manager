@@ -153,6 +153,13 @@ class InviteUser(SQLModel):
     email: EmailStr
     role: Role = Role.MEMBER
 
+class MemberSearchResult(SQLModel):
+    user_id: uuid.UUID
+    email: str
+    full_name: str | None = None
+    role: Role
+    member_since: datetime | None = None
+
 ###########################################
 # Item
 class ItemBase(SQLModel):

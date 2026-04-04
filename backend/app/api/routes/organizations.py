@@ -1,6 +1,8 @@
+import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select as sa_select, text
 from sqlmodel import col, func, select
 
 from app import crud
@@ -16,10 +18,12 @@ from app.models import (
     ItemsPublic,
     Membership,
     MembershipPublic,
+    MemberSearchResult,
     Organization,
     OrganizationCreate,
     OrganizationPublic,
     Role,
+    User,
 )
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -70,6 +74,48 @@ async def invite_user(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{org_id}/users/search", response_model=list[MemberSearchResult])
+async def search_members(
+    org_id: uuid.UUID,
+    session: SessionDep,
+    _: Membership = Depends(require_admin),
+    q: str = Query(..., min_length=1, description="Full-text search query (names or emails)"),
+) -> list[MemberSearchResult]:
+    """
+    Full-text search over member names and emails (admin only).
+
+    Uses PostgreSQL tsvector/tsquery with a GIN index for performance.
+    Each word in `q` is matched as a prefix, so `jo` matches `john`.
+    Returns user details + role for every matching member.
+    """
+    # Strip tsquery special chars to prevent syntax errors, then build prefix query.
+    # e.g. "john do" → "john:* & do:*"
+    safe_q = re.sub(r"[^\w\s]", "", q, flags=re.UNICODE).strip()
+    if not safe_q:
+        return []
+    tsquery = " & ".join(f"{word}:*" for word in safe_q.split())
+
+    stmt = (
+        sa_select(
+            User.id.label("user_id"),
+            User.email,
+            User.full_name,
+            Membership.role,
+            Membership.created_at.label("member_since"),
+        )
+        .join(Membership, Membership.user_id == User.id)
+        .where(Membership.org_id == org_id)
+        .where(
+            text(
+                "to_tsvector('english', coalesce(\"user\".full_name, '') || ' ' || \"user\".email)"
+                " @@ to_tsquery('english', :tsquery)"
+            ).bindparams(tsquery=tsquery)
+        )
+    )
+    rows = (await session.execute(stmt)).mappings().all()
+    return [MemberSearchResult.model_validate(dict(row)) for row in rows]
 
 
 @router.get("/{org_id}/users", response_model=list[MembershipPublic])
